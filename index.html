@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#153a5b" />
+  <title>CAP Leadership Feedback</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="assets/icon-192.png" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="loginScreen" class="login-wrap">
+  <div class="login-card">
+    <div class="brand"><div class="brand-mark">LF</div><div><h1>CAP Leadership Feedback</h1><p>Leadership evaluation and review system</p></div></div>
+    <div id="configError" class="alert alert-danger hidden"></div>
+    <div id="loginError" class="alert alert-danger hidden"></div>
+    <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="username"></div>
+    <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+    <div class="login-actions"><button id="loginBtn" class="btn btn-primary">Log In</button></div>
+    <div class="config-note">Uses the same Supabase login accounts and shared CAP unit/member database as your CAP applications. Feedback records are not cached for offline use.</div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header class="topbar">
+    <div class="topbar-left"><div class="brand-mark" style="width:38px;height:38px;border:1px solid rgba(255,255,255,.35)">LF</div><div><h1>CAP Leadership Feedback</h1><small id="connectionStatus">Connected</small></div></div>
+    <div class="userbox">
+      <div class="userbox-meta">
+        <span id="memberTypePill" class="pill"></span>
+        <span id="rolePill" class="pill"></span>
+        <span id="userName" class="pill"></span>
+        <button id="installBtn" class="btn btn-sm btn-secondary install-hidden">Install App</button>
+        <button id="logoutBtn" class="btn btn-sm btn-secondary">Log Out</button>
+      </div>
+      <div class="default-unit-row"><label class="default-unit-label" for="defaultLocationSelect">Default Evaluation Unit</label><select id="defaultLocationSelect" class="unit-select"></select></div>
+    </div>
+  </header>
+  <nav id="mainnav" class="mainnav"></nav>
+  <main>
+    <section id="view-entry" class="view hidden"></section>
+    <section id="view-my" class="view hidden"></section>
+    <section id="view-reports" class="view hidden"></section>
+    <section id="view-trends" class="view hidden"></section>
+    <section id="view-admin" class="view hidden"></section>
+    <div class="footer-note">CAP Leadership Feedback • Supabase-backed • PWA shell may be installed, but confidential feedback data is always loaded from Supabase.</div>
+  </main>
+</div>
+
+<dialog id="recordModal"><div class="modal-head"><b id="modalTitle">Feedback Record</b><button class="modal-close" onclick="document.getElementById('recordModal').close()">×</button></div><div id="modalBody" class="modal-body"></div></dialog>
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+CAP Leadership Feedback
+Supabase/GitHub Pages production build
+Version: 1.1.0
+Build date: 2026-09-15
+
+Includes the final demo-approved Reports workflow:
+- Unit Feedback is the default Reports tab
+- progressive Show Next batch loading
+- configurable records-to-show batch size
+- Pass / Retain in Grade column
+- Member Reports retained as the second Reports tab
