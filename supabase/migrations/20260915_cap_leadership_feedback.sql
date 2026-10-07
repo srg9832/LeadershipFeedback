@@ -226,14 +226,8 @@ as $$
       and case p_role
         when 'cadet_evaluator' then p.cadet_evaluator
         when 'cadet_reviewer' then p.cadet_reviewer
-        when 'senior_evaluator' then p.senior_evaluator and exists(
-          select 1 from public.profiles pr join public.members m on m.id=pr.member_id
-          where pr.id=auth.uid() and m.member_type='Senior'
-        )
-        when 'senior_reviewer' then p.senior_reviewer and exists(
-          select 1 from public.profiles pr join public.members m on m.id=pr.member_id
-          where pr.id=auth.uid() and m.member_type='Senior'
-        )
+        when 'senior_evaluator' then p.senior_evaluator
+        when 'senior_reviewer' then p.senior_reviewer
         when 'unit_admin' then p.unit_admin
         else false
       end
@@ -506,10 +500,6 @@ begin
     if v_unit is null then raise exception 'Unit is required'; end if;
     if v_form='senior' then
       if not public.has_leadership_unit_role(v_unit,'senior_evaluator') then raise exception 'Senior Evaluator permission required'; end if;
-      if not public.is_leadership_app_admin() and not exists(
-        select 1 from public.profiles p join public.members m on m.id=p.member_id
-        where p.id=v_user and m.member_type='Senior'
-      ) then raise exception 'Senior Evaluator must be a Senior member'; end if;
     else
       if not public.has_leadership_unit_role(v_unit,'cadet_evaluator') then raise exception 'Cadet Evaluator permission required'; end if;
     end if;
@@ -543,9 +533,9 @@ begin
     end if;
   end if;
 
-  select coalesce(nullif(p.display_name,''),trim(concat_ws(' ',m.first_name,m.last_name)),'CAP User')
+  select coalesce(nullif(p.display_name,''),'CAP User')
     into v_evaluator_name
-  from public.profiles p left join public.members m on m.id=p.member_id
+  from public.profiles p
   where p.id=v_user;
 
   insert into public.leadership_feedback(
