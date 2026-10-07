@@ -40,9 +40,9 @@ The current assignment is the row where:
 
 When an authorized administrator moves a member, the previous row is closed and retained for history.
 
-### `profiles.member_id`
+### Login accounts vs. CAP member records
 
-Links a Supabase login to the shared CAP member record. It is nullable because many members may never need an application login.
+Leadership login accounts and evaluated CAP members are intentionally separate concepts. `auth.users` / `profiles` identify who can sign in and which Leadership permissions an administrator grants. The shared `members` table identifies people being evaluated by CAPID. A `profiles.member_id` value may exist because another CAP application uses it, but Leadership permissions do not depend on that link.
 
 ## Leadership-specific permissions
 
@@ -98,8 +98,8 @@ No feedback edit/delete workflow is exposed. This preserves the submitted histor
 - Cadet Evaluator: own Phase I–IV feedback for authorized unit(s).
 - Cadet Reviewer: all Phase I–IV feedback for authorized unit(s).
 - Unit Admin: local administration and cadet unit review; no automatic Senior access.
-- Senior Evaluator: own Senior feedback for authorized unit(s); evaluator must be a Senior member.
-- Senior Reviewer: all Senior feedback for authorized unit(s); reviewer must be a Senior member in the website permission model.
+- Senior Evaluator: own Senior feedback for authorized unit(s), when an App Admin or Unit Admin grants that permission.
+- Senior Reviewer: all Senior feedback for authorized unit(s), when an App Admin or Unit Admin grants that permission.
 - Encampment Evaluator: own encampment records and entry access during active date window.
 - Encampment Reviewer: all authorized encampment feedback/reports/trends.
 - Encampment Admin: encampment setup only unless separately granted review/evaluator permissions.
