@@ -12,7 +12,6 @@
 
 - [ ] Existing CAP Schedule email/password logs into CAP Leadership Feedback.
 - [ ] Existing Schedule App Admin was bootstrapped as a Leadership App Admin.
-- [ ] Link the App Admin login to the correct shared CAPID/member record.
 - [ ] Existing Auth email is reused rather than duplicated when granted Leadership permissions.
 - [ ] New user creation works with email + initial password and sends no invitation email.
 
@@ -51,7 +50,7 @@
 
 ## Senior feedback confidentiality
 
-- [ ] Cadet login cannot be assigned Senior Evaluator/Reviewer.
+- [ ] App Admin or Unit Admin can grant Senior Evaluator/Reviewer without linking the login to a CAP member.
 - [ ] Senior Evaluator can submit Senior feedback in authorized unit.
 - [ ] Senior Evaluator sees only Senior records they entered unless also Senior Reviewer.
 - [ ] Senior Reviewer sees Senior feedback in authorized unit.
@@ -114,7 +113,7 @@
 ## Administration permissions
 
 - [ ] Unit Admin can manage local users/member roster for authorized unit only.
-- [ ] Unit Admin can grant Cadet Evaluator/Reviewer, Senior roles to Senior members, and Unit Admin locally.
+- [ ] Unit Admin can grant Cadet Evaluator/Reviewer, Senior Evaluator/Reviewer, and Unit Admin locally.
 - [ ] Unit Admin cannot grant Leadership App Admin or encampment-wide roles.
 - [ ] Leadership App Admin can manage every unit and global role.
 - [ ] Application prevents removing the last Leadership App Admin.
