@@ -173,7 +173,8 @@ Deno.serve(async (req) => {
           capid: m?.capid ?? "",
           firstName: m?.first_name ?? "",
           lastName: m?.last_name ?? "",
-          memberType: m?.member_type ?? "Senior",
+          memberType: m?.member_type ?? "",
+          memberLinked: !!m,
           memberActive: m?.active ?? true,
           memberId: m?.id ?? null,
           unitId,
@@ -186,20 +187,14 @@ Deno.serve(async (req) => {
 
     if (action === "save") {
       requireUnitAdmin();
+
       const userIdInput = clean(body.userId || body.user_id) || null;
       const email = clean(body.email).toLowerCase();
       const password = clean(body.password);
-      const capid = clean(body.capid);
-      const firstName = clean(body.firstName || body.first_name);
-      const lastName = clean(body.lastName || body.last_name);
-      const memberType = clean(body.memberType || body.member_type);
+      const displayName = clean(body.displayName || body.display_name);
       const roles = Array.isArray(body.roles) ? body.roles.map(clean) : [];
 
-      if (!email || !capid || !firstName || !lastName) throw new Error("Email, CAPID, first name, and last name are required");
-      if (!["Cadet", "Senior"].includes(memberType)) throw new Error("Member Type must be Cadet or Senior");
-      if (memberType === "Cadet" && (bool(roles, "seniorEvaluator") || bool(roles, "seniorReviewer"))) {
-        throw new Error("Cadet accounts cannot receive Senior permissions");
-      }
+      if (!email || !displayName) throw new Error("Display name and email are required");
 
       const globalRoles = ["appAdmin", "encampmentEvaluator", "encampmentReviewer", "encampmentAdmin"];
       if (!callerIsAppAdmin && globalRoles.some((r) => roles.includes(r))) {
@@ -212,11 +207,9 @@ Deno.serve(async (req) => {
       let target: any = userIdInput ? authUsers.find((u: any) => u.id === userIdInput) : null;
       if (userIdInput && !target) throw new Error("User account not found");
       if (!target) target = authUsers.find((u: any) => (u.email ?? "").toLowerCase() === email);
-      const targetAlreadyExisted = !!target;
 
-      // A local Unit Admin may edit only users already attached to the selected unit.
-      // They may still LINK an existing account by email, but cannot submit an arbitrary
-      // Auth UUID and take over an unrelated user.
+      // A local Unit Admin may manage only shared users already associated with the
+      // selected unit in at least one CAP Applications module.
       let targetManagedInSelectedUnit = false;
       if (target && !callerIsAppAdmin) {
         const { data: targetLocalPerm, error: targetLocalPermError } = await admin.from("leadership_unit_permissions")
@@ -226,6 +219,7 @@ Deno.serve(async (req) => {
         const { data: targetProfileForAccess, error: targetProfileForAccessError } = await admin.from("profiles")
           .select("member_id,default_unit_id").eq("id", target.id).maybeSingle();
         if (targetProfileForAccessError) throw targetProfileForAccessError;
+
         let memberInUnit = false;
         if (targetProfileForAccess?.member_id) {
           const { data: targetAssignment, error: targetAssignmentError } = await admin.from("member_unit_assignments")
@@ -234,6 +228,7 @@ Deno.serve(async (req) => {
           if (targetAssignmentError) throw targetAssignmentError;
           memberInUnit = !!targetAssignment;
         }
+
         const [
           schedulePermResult,
           uniformPermResult,
@@ -246,6 +241,7 @@ Deno.serve(async (req) => {
         if (schedulePermResult.error) throw schedulePermResult.error;
         if (uniformPermResult.error) throw uniformPermResult.error;
         if (drillPermResult.error) throw drillPermResult.error;
+
         const drillPerm = drillPermResult.data;
         const activeDrillPerm = !!drillPerm && !drillPerm.revoked_at
           && (!drillPerm.expires_at || new Date(drillPerm.expires_at).getTime() > Date.now());
@@ -253,16 +249,18 @@ Deno.serve(async (req) => {
         targetManagedInSelectedUnit = !!targetLocalPerm || memberInUnit
           || !!schedulePermResult.data || !!uniformPermResult.data || activeDrillPerm
           || targetProfileForAccess?.default_unit_id === unitId || target.id === callerId;
+
         if (!targetManagedInSelectedUnit) {
-          const err: any = new Error("That existing login is not associated with this unit. A Leadership App Admin must link it first.");
+          const err: any = new Error("That shared CAP Applications login is not associated with this unit. A Leadership App Admin must link it first.");
           err.status = 403;
           throw err;
         }
       }
 
-      const displayName = `${firstName} ${lastName}`.trim();
+      // Reuse a shared account by email when possible; only create a new Auth user when
+      // the email is not already present in CAP Applications.
       if (!target) {
-        if (!password) throw new Error("An initial password is required for a new user");
+        if (!password) throw new Error("A temporary password is required only when creating a brand-new shared CAP Applications account");
         const { data, error } = await admin.auth.admin.createUser({
           email,
           password,
@@ -272,11 +270,9 @@ Deno.serve(async (req) => {
         if (error) throw error;
         target = data.user;
       } else {
-        // Existing login: App Admins may maintain credentials. A local Unit Admin may
-        // maintain credentials only for a user already managed in that unit. When the
-        // account is merely being linked by email for the first time, preserve its login
-        // email/password and only update display metadata.
-        const attrs: any = { user_metadata: { ...(target.user_metadata ?? {}), display_name: displayName } };
+        const attrs: any = {
+          user_metadata: { ...(target.user_metadata ?? {}), display_name: displayName },
+        };
         if (callerIsAppAdmin || targetManagedInSelectedUnit) {
           attrs.email = email;
           if (password) attrs.password = password;
@@ -286,90 +282,40 @@ Deno.serve(async (req) => {
         target = data.user;
       }
 
-      // Shared member record keyed by CAPID. If the login is already linked to a member,
-      // editing a CAPID corrects that same member record instead of creating an orphan duplicate.
-      const { data: byCapid, error: byCapidError } = await admin.from("members")
-        .select("id,capid,member_type,active").eq("capid", capid).maybeSingle();
-      if (byCapidError) throw byCapidError;
-
       const { data: profileBefore, error: profileBeforeError } = await admin.from("profiles")
-        .select("member_id,default_unit_id").eq("id", target.id).maybeSingle();
+        .select("id,member_id,default_unit_id").eq("id", target.id).maybeSingle();
       if (profileBeforeError) throw profileBeforeError;
 
-      let memberId = profileBefore?.member_id ?? byCapid?.id ?? null;
-      if (profileBefore?.member_id && byCapid && profileBefore.member_id !== byCapid.id) {
-        throw new Error("That CAPID already belongs to another member");
-      }
-
-      // Validate any unit transfer before changing the shared roster. This prevents a local
-      // Unit Admin from taking a member from a unit they do not administer.
-      if (memberId) {
-        const { data: assignmentForAuth, error: assignmentForAuthError } = await admin.from("member_unit_assignments")
-          .select("id,unit_id,start_date").eq("member_id", memberId).eq("active", true).eq("is_primary", true)
-          .order("start_date", { ascending: false }).limit(1).maybeSingle();
-        if (assignmentForAuthError) throw assignmentForAuthError;
-        if (assignmentForAuth && assignmentForAuth.unit_id !== unitId && !callerIsAppAdmin && !callerAdminUnits.has(assignmentForAuth.unit_id)) {
-          const err: any = new Error("This member is currently assigned to another unit that you do not administer");
-          err.status = 403;
-          throw err;
-        }
-      }
-
-      if (memberId) {
-        const { error } = await admin.from("members").update({
-          capid,
-          first_name: firstName,
-          last_name: lastName,
-          member_type: memberType,
-          active: true,
-        }).eq("id", memberId);
+      let linkedMember: any = null;
+      if (profileBefore?.member_id) {
+        const { data, error } = await admin.from("members")
+          .select("id,capid,first_name,last_name,member_type,active")
+          .eq("id", profileBefore.member_id).maybeSingle();
         if (error) throw error;
-      } else {
-        const { data, error } = await admin.from("members").insert({
-          capid, first_name: firstName, last_name: lastName, member_type: memberType, active: true,
-        }).select("id").single();
-        if (error) throw error;
-        memberId = data.id;
+        linkedMember = data;
       }
 
-      const { data: currentAssignment } = await admin.from("member_unit_assignments")
-        .select("id,unit_id,start_date").eq("member_id", memberId).eq("active", true).eq("is_primary", true)
-        .order("start_date", { ascending: false }).limit(1).maybeSingle();
-
-      if (currentAssignment && currentAssignment.unit_id !== unitId) {
-        if (!callerIsAppAdmin && !callerAdminUnits.has(currentAssignment.unit_id)) {
-          const err: any = new Error("This member is currently assigned to another unit that you do not administer");
-          err.status = 403;
-          throw err;
-        }
-        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-        const endDate = currentAssignment.start_date > yesterday ? currentAssignment.start_date : yesterday;
-        const { error } = await admin.from("member_unit_assignments")
-          .update({ active: false, end_date: endDate }).eq("id", currentAssignment.id);
-        if (error) throw error;
-      }
-      if (!currentAssignment || currentAssignment.unit_id !== unitId) {
-        const { error } = await admin.from("member_unit_assignments").insert({
-          member_id: memberId, unit_id: unitId, is_primary: true, active: true,
-        });
-        if (error) throw error;
+      // Senior feedback access depends on the user's actual shared CAP member identity.
+      // General account creation and non-Senior Leadership roles do not require a CAPID.
+      if ((bool(roles, "seniorEvaluator") || bool(roles, "seniorReviewer"))
+          && linkedMember?.member_type !== "Senior") {
+        throw new Error("Senior Evaluator/Reviewer requires this login to be linked to a Senior member in the shared CAP member roster");
       }
 
-      // Profile is shared across CAP Applications. Some older Auth accounts were created
-      // before the shared profile trigger existed, so create the profile if it is missing.
-      // Never overwrite CAP Schedule's app-admin flag or existing default unit.
-      const profileUpdate: any = { display_name: displayName, member_id: memberId };
+      const profileUpdate: any = { display_name: displayName };
       if (!profileBefore?.default_unit_id) profileUpdate.default_unit_id = unitId;
+
       if (profileBefore) {
-        const { error: profileError } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
-        if (profileError) throw profileError;
+        const { error } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
+        if (error) throw error;
       } else {
-        const { error: profileError } = await admin.from("profiles").insert({
+        const { error } = await admin.from("profiles").insert({
           id: target.id,
+          display_name: displayName,
           is_app_admin: false,
-          ...profileUpdate,
+          default_unit_id: unitId,
         });
-        if (profileError) throw profileError;
+        if (error) throw error;
       }
 
       const { error: unitPermError } = await admin.from("leadership_unit_permissions").upsert({
@@ -387,6 +333,7 @@ Deno.serve(async (req) => {
         const { data: targetGlobalBefore, error: targetGlobalBeforeError } = await admin.from("leadership_global_permissions")
           .select("is_app_admin").eq("user_id", target.id).maybeSingle();
         if (targetGlobalBeforeError) throw targetGlobalBeforeError;
+
         if (targetGlobalBefore?.is_app_admin && !bool(roles, "appAdmin")) {
           const { count, error: countError } = await admin.from("leadership_global_permissions")
             .select("user_id", { count: "exact", head: true }).eq("is_app_admin", true);
@@ -409,7 +356,7 @@ Deno.serve(async (req) => {
         action: userIdInput ? "UPDATE_USER" : "SAVE_USER",
         entity_type: "user",
         entity_id: target.id,
-        details: { unit_id: unitId, capid, roles },
+        details: { unit_id: unitId, roles, shared_account: true },
       });
 
       return json({ ok: true, userId: target.id });
