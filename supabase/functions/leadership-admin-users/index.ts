@@ -192,45 +192,7 @@ Deno.serve(async (req) => {
       if (userIdInput && !target) throw new Error("User account not found");
       if (!target) target = authUsers.find((u: any) => (u.email ?? "").toLowerCase() === email);
 
-      // A local Unit Admin may manage only shared users already associated with the
-      // selected unit in at least one CAP Applications module.
-      let targetManagedInSelectedUnit = false;
-      if (target && !callerIsAppAdmin) {
-        const { data: targetLocalPerm, error: targetLocalPermError } = await admin.from("leadership_unit_permissions")
-          .select("user_id").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle();
-        if (targetLocalPermError) throw targetLocalPermError;
-
-        const { data: targetProfileForAccess, error: targetProfileForAccessError } = await admin.from("profiles")
-          .select("member_id,default_unit_id").eq("id", target.id).maybeSingle();
-        if (targetProfileForAccessError) throw targetProfileForAccessError;
-
-        const [
-          schedulePermResult,
-          uniformPermResult,
-          drillPermResult,
-        ] = await Promise.all([
-          admin.from("user_unit_permissions").select("user_id").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle(),
-          admin.from("uniform_unit_permissions").select("user_id").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle(),
-          admin.from("drill_unit_permissions").select("user_id,revoked_at,expires_at").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle(),
-        ]);
-        if (schedulePermResult.error) throw schedulePermResult.error;
-        if (uniformPermResult.error) throw uniformPermResult.error;
-        if (drillPermResult.error) throw drillPermResult.error;
-
-        const drillPerm = drillPermResult.data;
-        const activeDrillPerm = !!drillPerm && !drillPerm.revoked_at
-          && (!drillPerm.expires_at || new Date(drillPerm.expires_at).getTime() > Date.now());
-
-        targetManagedInSelectedUnit = !!targetLocalPerm
-          || !!schedulePermResult.data || !!uniformPermResult.data || activeDrillPerm
-          || targetProfileForAccess?.default_unit_id === unitId || target.id === callerId;
-
-        if (!targetManagedInSelectedUnit) {
-          const err: any = new Error("That shared CAP Applications login is not associated with this unit. A Leadership App Admin must link it first.");
-          err.status = 403;
-          throw err;
-        }
-      }
+      const targetAlreadyExisted = !!target;
 
       // Reuse a shared account by email when possible; only create a new Auth user when
       // the email is not already present in CAP Applications.
@@ -244,35 +206,39 @@ Deno.serve(async (req) => {
         });
         if (error) throw error;
         target = data.user;
-      } else {
+      } else if (callerIsAppAdmin) {
         const attrs: any = {
+          email,
           user_metadata: { ...(target.user_metadata ?? {}), display_name: displayName },
         };
-        if (callerIsAppAdmin || targetManagedInSelectedUnit) {
-          attrs.email = email;
-          if (password) attrs.password = password;
-        }
+        if (password) attrs.password = password;
         const { data, error } = await admin.auth.admin.updateUserById(target.id, attrs);
         if (error) throw error;
         target = data.user;
       }
+      // Unit Admins may grant Leadership permissions to any existing shared login,
+      // but they cannot change that account's email, password, or shared display name.
 
       const { data: profileBefore, error: profileBeforeError } = await admin.from("profiles")
-        .select("id,member_id,default_unit_id").eq("id", target.id).maybeSingle();
+        .select("id,display_name,member_id,default_unit_id").eq("id", target.id).maybeSingle();
       if (profileBeforeError) throw profileBeforeError;
 
       // Leadership permissions are administrative designations. They are intentionally
       // independent from the shared CAP member roster and CAPID/member linkage.
-      const profileUpdate: any = { display_name: displayName };
-      if (!profileBefore?.default_unit_id) profileUpdate.default_unit_id = unitId;
-
       if (profileBefore) {
-        const { error } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
-        if (error) throw error;
+        if (callerIsAppAdmin || !targetAlreadyExisted) {
+          const profileUpdate: any = { display_name: displayName };
+          if (!profileBefore.default_unit_id) profileUpdate.default_unit_id = unitId;
+          const { error } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
+          if (error) throw error;
+        }
       } else {
+        const safeDisplayName = callerIsAppAdmin || !targetAlreadyExisted
+          ? displayName
+          : clean(target.user_metadata?.display_name || target.email || "CAP User");
         const { error } = await admin.from("profiles").insert({
           id: target.id,
-          display_name: displayName,
+          display_name: safeDisplayName,
           is_app_admin: false,
           default_unit_id: unitId,
         });
