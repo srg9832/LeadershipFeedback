@@ -94,10 +94,40 @@ Deno.serve(async (req) => {
       if (callerIsAppAdmin) {
         const { data: globalRows } = await admin.from("leadership_global_permissions").select("user_id");
         for (const g of globalRows ?? []) ids.add(g.user_id);
+      } else {
+        // Leadership Unit Admins may see shared CAP Applications users already associated
+        // with the selected unit in another app, without exposing the wing-wide Auth directory.
+        const [
+          schedulePermResult,
+          uniformPermResult,
+          drillPermResult,
+          defaultProfileResult,
+        ] = await Promise.all([
+          admin.from("user_unit_permissions").select("user_id").eq("unit_id", unitId),
+          admin.from("uniform_unit_permissions").select("user_id").eq("unit_id", unitId),
+          admin.from("drill_unit_permissions").select("user_id,revoked_at,expires_at").eq("unit_id", unitId),
+          admin.from("profiles").select("id").eq("default_unit_id", unitId),
+        ]);
+        if (schedulePermResult.error) throw schedulePermResult.error;
+        if (uniformPermResult.error) throw uniformPermResult.error;
+        if (drillPermResult.error) throw drillPermResult.error;
+        if (defaultProfileResult.error) throw defaultProfileResult.error;
+        for (const p of schedulePermResult.data ?? []) ids.add(p.user_id);
+        for (const p of uniformPermResult.data ?? []) ids.add(p.user_id);
+        for (const p of drillPermResult.data ?? []) {
+          const active = !p.revoked_at && (!p.expires_at || new Date(p.expires_at).getTime() > Date.now());
+          if (active) ids.add(p.user_id);
+        }
+        for (const p of defaultProfileResult.data ?? []) ids.add(p.id);
       }
       ids.add(callerId);
 
       const authUsers = await allAuthUsers(admin);
+      // Leadership App Admins administer the whole application, so show the complete
+      // shared CAP Applications Auth directory. Roles displayed below remain scoped to
+      // the currently selected Leadership unit plus any application-wide Leadership roles.
+      if (callerIsAppAdmin) for (const u of authUsers) ids.add(u.id);
+
       const authById = new Map(authUsers.map((u: any) => [u.id, u]));
       const idList = [...ids];
       if (!idList.length) return json({ users: [] });
@@ -204,11 +234,24 @@ Deno.serve(async (req) => {
           if (targetAssignmentError) throw targetAssignmentError;
           memberInUnit = !!targetAssignment;
         }
-        const { data: schedulePerm, error: schedulePermError } = await admin.from("user_unit_permissions")
-          .select("user_id").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle();
-        if (schedulePermError) throw schedulePermError;
+        const [
+          schedulePermResult,
+          uniformPermResult,
+          drillPermResult,
+        ] = await Promise.all([
+          admin.from("user_unit_permissions").select("user_id").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle(),
+          admin.from("uniform_unit_permissions").select("user_id").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle(),
+          admin.from("drill_unit_permissions").select("user_id,revoked_at,expires_at").eq("user_id", target.id).eq("unit_id", unitId).maybeSingle(),
+        ]);
+        if (schedulePermResult.error) throw schedulePermResult.error;
+        if (uniformPermResult.error) throw uniformPermResult.error;
+        if (drillPermResult.error) throw drillPermResult.error;
+        const drillPerm = drillPermResult.data;
+        const activeDrillPerm = !!drillPerm && !drillPerm.revoked_at
+          && (!drillPerm.expires_at || new Date(drillPerm.expires_at).getTime() > Date.now());
 
-        targetManagedInSelectedUnit = !!targetLocalPerm || memberInUnit || !!schedulePerm
+        targetManagedInSelectedUnit = !!targetLocalPerm || memberInUnit
+          || !!schedulePermResult.data || !!uniformPermResult.data || activeDrillPerm
           || targetProfileForAccess?.default_unit_id === unitId || target.id === callerId;
         if (!targetManagedInSelectedUnit) {
           const err: any = new Error("That existing login is not associated with this unit. A Leadership App Admin must link it first.");
@@ -312,11 +355,22 @@ Deno.serve(async (req) => {
         if (error) throw error;
       }
 
-      // Profile is shared with CAP Schedule. Do not remove existing schedule permissions.
+      // Profile is shared across CAP Applications. Some older Auth accounts were created
+      // before the shared profile trigger existed, so create the profile if it is missing.
+      // Never overwrite CAP Schedule's app-admin flag or existing default unit.
       const profileUpdate: any = { display_name: displayName, member_id: memberId };
       if (!profileBefore?.default_unit_id) profileUpdate.default_unit_id = unitId;
-      const { error: profileError } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
-      if (profileError) throw profileError;
+      if (profileBefore) {
+        const { error: profileError } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
+        if (profileError) throw profileError;
+      } else {
+        const { error: profileError } = await admin.from("profiles").insert({
+          id: target.id,
+          is_app_admin: false,
+          ...profileUpdate,
+        });
+        if (profileError) throw profileError;
+      }
 
       const { error: unitPermError } = await admin.from("leadership_unit_permissions").upsert({
         user_id: target.id,
