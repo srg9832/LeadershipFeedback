@@ -81,16 +81,6 @@ Deno.serve(async (req) => {
       if (unitPermError) throw unitPermError;
       for (const r of unitPermRows ?? []) ids.add(r.user_id);
 
-      // Include linked login users whose current primary member assignment is the selected unit.
-      const { data: memberRows, error: memberError } = await admin.from("member_unit_assignments")
-        .select("member_id").eq("unit_id", unitId).eq("active", true).eq("is_primary", true);
-      if (memberError) throw memberError;
-      const memberIds = (memberRows ?? []).map((r: any) => r.member_id);
-      if (memberIds.length) {
-        const { data: profileRows } = await admin.from("profiles").select("id").in("member_id", memberIds);
-        for (const p of profileRows ?? []) ids.add(p.id);
-      }
-
       if (callerIsAppAdmin) {
         const { data: globalRows } = await admin.from("leadership_global_permissions").select("user_id");
         for (const g of globalRows ?? []) ids.add(g.user_id);
@@ -134,11 +124,6 @@ Deno.serve(async (req) => {
 
       const { data: profiles } = await admin.from("profiles")
         .select("id,display_name,member_id,default_unit_id").in("id", idList);
-      const memberLinkIds = (profiles ?? []).map((p: any) => p.member_id).filter(Boolean);
-      const { data: members } = memberLinkIds.length
-        ? await admin.from("members").select("id,capid,first_name,last_name,member_type,active").in("id", memberLinkIds)
-        : { data: [] as any[] };
-      const memberById = new Map((members ?? []).map((m: any) => [m.id, m]));
       const profileById = new Map((profiles ?? []).map((p: any) => [p.id, p]));
       const unitPermById = new Map((unitPermRows ?? []).map((p: any) => [p.user_id, p]));
 
@@ -153,7 +138,6 @@ Deno.serve(async (req) => {
       const users = idList.map((id) => {
         const au: any = authById.get(id);
         const p: any = profileById.get(id);
-        const m: any = p?.member_id ? memberById.get(p.member_id) : null;
         const up: any = unitPermById.get(id) ?? {};
         const gl: any = globalById.get(id) ?? {};
         const roles: string[] = [];
@@ -220,15 +204,6 @@ Deno.serve(async (req) => {
           .select("member_id,default_unit_id").eq("id", target.id).maybeSingle();
         if (targetProfileForAccessError) throw targetProfileForAccessError;
 
-        let memberInUnit = false;
-        if (targetProfileForAccess?.member_id) {
-          const { data: targetAssignment, error: targetAssignmentError } = await admin.from("member_unit_assignments")
-            .select("id").eq("member_id", targetProfileForAccess.member_id).eq("unit_id", unitId)
-            .eq("active", true).eq("is_primary", true).maybeSingle();
-          if (targetAssignmentError) throw targetAssignmentError;
-          memberInUnit = !!targetAssignment;
-        }
-
         const [
           schedulePermResult,
           uniformPermResult,
@@ -246,7 +221,7 @@ Deno.serve(async (req) => {
         const activeDrillPerm = !!drillPerm && !drillPerm.revoked_at
           && (!drillPerm.expires_at || new Date(drillPerm.expires_at).getTime() > Date.now());
 
-        targetManagedInSelectedUnit = !!targetLocalPerm || memberInUnit
+        targetManagedInSelectedUnit = !!targetLocalPerm
           || !!schedulePermResult.data || !!uniformPermResult.data || activeDrillPerm
           || targetProfileForAccess?.default_unit_id === unitId || target.id === callerId;
 
@@ -286,22 +261,8 @@ Deno.serve(async (req) => {
         .select("id,member_id,default_unit_id").eq("id", target.id).maybeSingle();
       if (profileBeforeError) throw profileBeforeError;
 
-      let linkedMember: any = null;
-      if (profileBefore?.member_id) {
-        const { data, error } = await admin.from("members")
-          .select("id,capid,first_name,last_name,member_type,active")
-          .eq("id", profileBefore.member_id).maybeSingle();
-        if (error) throw error;
-        linkedMember = data;
-      }
-
-      // Senior feedback access depends on the user's actual shared CAP member identity.
-      // General account creation and non-Senior Leadership roles do not require a CAPID.
-      if ((bool(roles, "seniorEvaluator") || bool(roles, "seniorReviewer"))
-          && linkedMember?.member_type !== "Senior") {
-        throw new Error("Senior Evaluator/Reviewer requires this login to be linked to a Senior member in the shared CAP member roster");
-      }
-
+      // Leadership permissions are administrative designations. They are intentionally
+      // independent from the shared CAP member roster and CAPID/member linkage.
       const profileUpdate: any = { display_name: displayName };
       if (!profileBefore?.default_unit_id) profileUpdate.default_unit_id = unitId;
 
