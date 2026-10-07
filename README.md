@@ -11,7 +11,7 @@ This package is designed to **extend the existing CAP Schedule Supabase project*
 - `public.units`
 - **New:** `public.members` — organization-wide CAP member roster keyed by unique CAPID
 - **New:** `public.member_unit_assignments` — current and historical unit assignments
-- `profiles.member_id` links a login account to the shared member record when that member has a login
+- Login accounts are shared through Supabase Auth. Leadership permissions are assigned directly to those login accounts and do not require CAPID/member linkage
 
 A CAP member does **not** need a login. Members may exist in the shared roster solely so applications can identify them by CAPID.
 
