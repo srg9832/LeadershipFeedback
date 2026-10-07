@@ -1,4 +1,4 @@
-const CACHE = 'cap-leadership-feedback-shell-v6';
+const CACHE = 'cap-leadership-feedback-shell-v7';
 const SHELL = [
   './', './index.html', './styles.css', './config.js', './app.js', './manifest.json',
   './assets/icon-192.png', './assets/icon-512.png', './assets/icon.svg'
