@@ -195,7 +195,7 @@ async function loadAppData(){
   if(!sb)throw new Error('Supabase is not configured.');
   const {data:{user},error:userErr}=await sb.auth.getUser();if(userErr||!user)throw userErr||new Error('Not signed in');
   const [profileR,unitsR,globalR,unitPermR,encR,feedbackR,membersR,assignR,namesR]=await Promise.all([
-    sb.from('profiles').select('id,display_name,member_id,default_unit_id').eq('id',user.id).single(),
+    sb.from('profiles').select('id,display_name,member_id,default_unit_id,must_change_password').eq('id',user.id).single(),
     sb.from('units').select('id,charter_number,name,city,state,active').order('charter_number'),
     sb.from('leadership_global_permissions').select('*').eq('user_id',user.id).maybeSingle(),
     sb.from('leadership_unit_permissions').select('*').eq('user_id',user.id),
@@ -219,7 +219,7 @@ async function loadAppData(){
   const display=currentProfile.display_name||user.email?.split('@')[0]||'CAP User';const parts=display.trim().split(/\s+/);const first=parts.shift()||display,last=parts.join(' ');
   const union=[];Object.entries(globalRoles).forEach(([k,v])=>{if(v)union.push(k)});Object.values(unitRoles).forEach(r=>Object.entries(r).forEach(([k,v])=>{if(v&&!union.includes(k))union.push(k)}));
   let defaultUnit=currentProfile.default_unit_id||Object.keys(unitRoles)[0]||'';if(globalRoles.appAdmin&&!defaultUnit)defaultUnit=activeUnits()[0]?.id||DB.units[0]?.id||'';
-  currentUser={id:user.id,email:user.email||'',firstName:first,lastName:last,displayName:display,unitId:defaultUnit,roles:union,globalRoles,unitRoles};
+  currentUser={id:user.id,email:user.email||'',firstName:first,lastName:last,displayName:display,unitId:defaultUnit,mustChangePassword:!!currentProfile.must_change_password,roles:union,globalRoles,unitRoles};
   currentUnitId=defaultUnit;
   const me=DB.users.find(u=>u.id===user.id);if(me)Object.assign(me,currentUser);else DB.users.push({...currentUser});
   DB.records.forEach(r=>{if(r.encampmentId){const e=DB.encampments.find(x=>x.id===r.encampmentId);r.location=e?encampmentLabel(e):''}});
@@ -239,7 +239,42 @@ function showApp(){
   const opts=entryAccessibleLocations(),def=selectedDefaultLocationKey(),sel=$('#defaultLocationSelect');
   sel.innerHTML=opts.length?opts.map(o=>`<option value="${escapeHtml(o.key)}" ${o.key===def?'selected':''}>${escapeHtml(o.label)}</option>`).join(''):'<option value="">No available evaluation units</option>';sel.disabled=!opts.length;
   buildNav();navigate(activeView);
+  if(currentUser?.mustChangePassword)setTimeout(()=>openPasswordDialog(true),0);
 }
+function openPasswordDialog(force=false){
+  const d=$('#passwordDialog');if(!d)return;
+  d.dataset.force=force?'true':'false';
+  $('#passwordDialogTitle').textContent=force?'Change Temporary Password':'Change Password';
+  $('#passwordDialogHelp').textContent=force
+    ? 'This is your first sign-in with a temporary password. Choose your own password before continuing.'
+    : 'This password is shared across CAP Schedule, Leadership Feedback, Drill Tests, and Uniform Inspections.';
+  $('#passwordCloseBtn').classList.toggle('hidden',force);
+  $('#passwordCancelBtn').classList.toggle('hidden',force);
+  $('#newPassword').value='';$('#confirmPassword').value='';
+  $('#passwordError').classList.add('hidden');$('#passwordError').textContent='';
+  d.showModal();setTimeout(()=>$('#newPassword').focus(),0);
+}
+function closePasswordDialog(){
+  const d=$('#passwordDialog');if(!d||d.dataset.force==='true')return;d.close();
+}
+async function savePassword(e){
+  e.preventDefault();
+  const p=$('#newPassword').value,c=$('#confirmPassword').value;
+  $('#passwordError').classList.add('hidden');$('#passwordError').textContent='';
+  try{
+    if(p.length<8)throw new Error('New password must be at least 8 characters.');
+    if(p!==c)throw new Error('Passwords do not match.');
+    const {error}=await sb.auth.updateUser({password:p});if(error)throw error;
+    const {error:profileError}=await sb.rpc('shared_complete_password_change');if(profileError)throw profileError;
+    currentUser.mustChangePassword=false;
+    if(currentProfile)currentProfile.must_change_password=false;
+    $('#passwordDialog').dataset.force='false';$('#passwordDialog').close();
+    toast('Password changed for your shared CAP Applications account.');
+  }catch(err){
+    $('#passwordError').textContent=friendlyError(err);$('#passwordError').classList.remove('hidden');
+  }
+}
+
 function buildNav(){const nav=[];if(entryAccessibleLocations().length)nav.push(['entry','Feedback Entry']);if(entryAccessibleLocations().length)nav.push(['my','Feedback Records You Have Given']);if(hasAnyReview())nav.push(['reports','Reports']);if(hasAnyReview())nav.push(['trends','Unit Trends']);if(canAdminPage())nav.push(['admin','Administration']);$('#mainnav').innerHTML=nav.map(([id,label])=>`<button class="navbtn ${activeView===id?'active':''}" data-view="${id}">${label}</button>`).join('');$$('#mainnav .navbtn').forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
 function navigate(view){activeView=view;$$('.view').forEach(v=>v.classList.add('hidden'));const el=$('#view-'+view);if(!el)return;el.classList.remove('hidden');buildNav();const fn={entry:renderEntry,my:renderMy,reports:renderReports,trends:renderTrends,admin:renderAdmin}[view];if(fn)fn()}
 
@@ -497,4 +532,13 @@ async function changeDefaultLocation(key){window.__defaultLocationKey=key;window
 
 function setupPWA(){if('serviceWorker'in navigator)navigator.serviceWorker.register('./service-worker.js').catch(console.warn);let deferred=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;$('#installBtn')?.classList.remove('install-hidden')});$('#installBtn').onclick=async()=>{if(!deferred)return;deferred.prompt();await deferred.userChoice;deferred=null;$('#installBtn').classList.add('install-hidden')}}
 async function boot(){setupPWA();if(!SUPABASE_READY){$('#configError').textContent='Setup required: edit config.js and paste the existing CAP Schedule Supabase anon/publishable key.';$('#configError').classList.remove('hidden');return}const {data}=await sb.auth.getSession();if(data.session){try{setBusy(true);await loadAppData();showApp()}catch(e){console.error(e);$('#loginError').textContent=friendlyError(e);$('#loginError').classList.remove('hidden')}finally{setBusy(false)}}}
-$('#loginBtn').onclick=login;$('#loginPassword').onkeydown=e=>{if(e.key==='Enter')login()};$('#logoutBtn').onclick=logout;$('#defaultLocationSelect').onchange=e=>changeDefaultLocation(e.target.value);boot();
+$('#loginBtn').onclick=login;
+$('#loginPassword').onkeydown=e=>{if(e.key==='Enter')login()};
+$('#logoutBtn').onclick=logout;
+$('#changePasswordBtn').onclick=()=>openPasswordDialog(false);
+$('#passwordCloseBtn').onclick=closePasswordDialog;
+$('#passwordCancelBtn').onclick=closePasswordDialog;
+$('#passwordForm').onsubmit=savePassword;
+$('#passwordDialog').addEventListener('cancel',e=>{if($('#passwordDialog').dataset.force==='true')e.preventDefault()});
+$('#defaultLocationSelect').onchange=e=>changeDefaultLocation(e.target.value);
+boot();
