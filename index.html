@@ -32,6 +32,7 @@
         <span id="rolePill" class="pill"></span>
         <span id="userName" class="pill"></span>
         <button id="installBtn" class="btn btn-sm btn-secondary install-hidden">Install App</button>
+        <button id="changePasswordBtn" class="btn btn-sm btn-secondary">Change Password</button>
         <button id="logoutBtn" class="btn btn-sm btn-secondary">Log Out</button>
       </div>
       <div class="default-unit-row"><label class="default-unit-label" for="defaultLocationSelect">Default Evaluation Unit</label><select id="defaultLocationSelect" class="unit-select"></select></div>
@@ -49,6 +50,24 @@
 </div>
 
 <dialog id="recordModal"><div class="modal-head"><b id="modalTitle">Feedback Record</b><button class="modal-close" onclick="document.getElementById('recordModal').close()">×</button></div><div id="modalBody" class="modal-body"></div></dialog>
+
+<dialog id="passwordDialog">
+  <form id="passwordForm" class="modal-body">
+    <div class="modal-head">
+      <div><b id="passwordDialogTitle">Change Password</b><div id="passwordDialogHelp" class="sub" style="margin-top:4px"></div></div>
+      <button id="passwordCloseBtn" class="modal-close" type="button">×</button>
+    </div>
+    <div class="grid grid-2" style="margin-top:14px">
+      <div class="field"><label>New Password</label><input id="newPassword" type="password" minlength="8" autocomplete="new-password" required></div>
+      <div class="field"><label>Confirm Password</label><input id="confirmPassword" type="password" minlength="8" autocomplete="new-password" required></div>
+    </div>
+    <div id="passwordError" class="alert alert-danger hidden" style="margin-top:12px"></div>
+    <div class="login-actions" style="margin-top:14px">
+      <button id="passwordCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
+      <button class="btn btn-primary" type="submit">Change Password</button>
+    </div>
+  </form>
+</dialog>
 <div id="toast" class="toast hidden"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
