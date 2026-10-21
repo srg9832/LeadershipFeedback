@@ -228,6 +228,7 @@ Deno.serve(async (req) => {
       if (profileBefore) {
         if (callerIsAppAdmin || !targetAlreadyExisted) {
           const profileUpdate: any = { display_name: displayName };
+          if (password && targetAlreadyExisted) profileUpdate.must_change_password = true;
           if (!profileBefore.default_unit_id) profileUpdate.default_unit_id = unitId;
           const { error } = await admin.from("profiles").update(profileUpdate).eq("id", target.id);
           if (error) throw error;
