@@ -541,6 +541,51 @@ async function toggleEncampment(id){const enc=DB.encampments.find(x=>x.id===id);
 async function saveUnit(e){e.preventDefault();if(!isAppAdmin())return;const fd=new FormData(e.target),id=fd.get('unitId')||null,row={charter_number:fd.get('charterNumber').trim().toUpperCase(),name:fd.get('name').trim(),active:fd.get('active')==='on'};setBusy(true);try{let q=id?sb.from('units').update(row).eq('id',id):sb.from('units').insert(row);const {error}=await q;if(error)throw error;toast(id?'Unit updated.':'Unit added.');editingUnitId=null;await refreshData(false);showApp()}catch(err){toast(friendlyError(err))}finally{setBusy(false)}}
 async function toggleUnit(id){if(!isAppAdmin())return;const u=DB.units.find(x=>x.id===id);if(!u)return;setBusy(true);try{const {error}=await sb.from('units').update({active:!u.active}).eq('id',id);if(error)throw error;toast(`${unitDisplay(u)} marked ${!u.active?'active':'inactive'}.`);await refreshData(false);showApp()}catch(err){toast(friendlyError(err))}finally{setBusy(false)}}
 
+// ============================================================
+// Public Cadet Self-Evaluation workflow (submission only)
+// ============================================================
+let publicSelfEvalUnits=[];
+
+function selfEvalFormTypeForGrade(grade){return SELF_EVAL_GRADE_TO_FORM[String(grade||'').trim()]||''}
+function selfEvalStatusLabel(status){return({awaiting_evaluator:'Awaiting Evaluator',evaluator_in_progress:'Evaluator In Progress',ready_for_review:'Ready for Formal Review',completed:'Completed',cancelled:'Cancelled'})[status]||status||''}
+function selfEvalStatusClass(status){return status==='awaiting_evaluator'?'awaiting':status==='evaluator_in_progress'?'progress':status==='ready_for_review'?'ready':status==='completed'?'completed':'cancelled'}
+function formatDateTime(v){if(!v)return'';const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}
+
+async function invokePublicSelfEvaluation(payload){
+  if(!SUPABASE_READY)throw new Error('The application is not configured yet.');
+  const name=CFG.publicSelfEvaluationFunctionName||'leadership-self-evaluation-public';
+  const url=`${String(CFG.supabaseUrl).replace(/\/$/,'')}/functions/v1/${encodeURIComponent(name)}`;
+  const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','apikey':CFG.supabaseAnonKey},body:JSON.stringify(payload)});
+  let data={};try{data=await res.json()}catch{}
+  if(!res.ok||data?.error)throw new Error(data?.error||`Request failed (${res.status})`);
+  return data;
+}
+
+async function showPublicSelfEvaluation(){
+  $('#loginScreen').classList.add('hidden');$('#app').classList.add('hidden');$('#publicSelfEvalScreen').classList.remove('hidden');
+  $('#publicSelfEvalError').classList.add('hidden');
+  $('#publicSelfEvalContent').innerHTML='<div class="empty">Loading active units...</div>';
+  try{
+    const data=await invokePublicSelfEvaluation({action:'bootstrap'});publicSelfEvalUnits=Array.isArray(data?.units)?data.units:[];renderPublicSelfEvaluationForm();
+  }catch(err){$('#publicSelfEvalError').textContent=friendlyError(err);$('#publicSelfEvalError').classList.remove('hidden');$('#publicSelfEvalContent').innerHTML='<div class="empty">The self-evaluation form could not be loaded.</div>'}
+}
+function hidePublicSelfEvaluation(){
+  $('#publicSelfEvalScreen').classList.add('hidden');$('#publicSelfEvalError').classList.add('hidden');
+  if(currentUser)$('#app').classList.remove('hidden');else $('#loginScreen').classList.remove('hidden');
+}
+function publicGradeOptions(){return '<option value="">Select current grade...</option>'+CADET_GRADES.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('')}
+function renderPublicSelfEvaluationForm(){
+  const unitOptions='<option value="">Select a unit</option>'+publicSelfEvalUnits.map(u=>`<option value="${escapeHtml(u.id)}">${escapeHtml([u.charterNumber,u.name].filter(Boolean).join(' — '))}</option>`).join('');
+  $('#publicSelfEvalContent').innerHTML=`<form id="publicSelfEvalForm"><div class="panel" style="box-shadow:none"><h2>Start Your Self-Evaluation</h2><p class="sub">Choose your unit and current grade. Your grade automatically selects the correct Phase I–IV Leadership Feedback form.</p><div class="grid grid-2"><div class="field"><label>Unit</label><select name="unitId" required>${unitOptions}</select></div><div class="field"><label>CAPID</label><input name="capid" inputmode="numeric" autocomplete="off" pattern="[0-9]{5,8}" required></div></div><div class="grid grid-3"><div class="field"><label>Last Name</label><input name="lastName" autocomplete="family-name" required></div><div class="field"><label>First Name</label><input name="firstName" autocomplete="given-name" required></div><div class="field"><label>Current Grade</label><select name="currentGrade" id="publicCurrentGrade" required>${publicGradeOptions()}</select></div></div><div class="public-honeypot" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div><div id="publicSelfEvalQuestions"><div class="empty">Select your current grade to load the correct feedback form.</div></div></div></form>`;
+  $('#publicCurrentGrade').onchange=renderPublicSelfEvaluationQuestions;$('#publicSelfEvalForm').onsubmit=submitPublicSelfEvaluation;
+}
+function renderPublicSelfEvaluationQuestions(){
+  const grade=$('#publicCurrentGrade')?.value||'',type=selfEvalFormTypeForGrade(grade),holder=$('#publicSelfEvalQuestions');if(!holder)return;
+  if(!type){holder.innerHTML='<div class="empty">Select your current grade to load the correct feedback form.</div>';return}
+  const f=FORMS[type];
+  holder.innerHTML=`<div class="phase-banner"><b>${escapeHtml(grade)} uses ${escapeHtml(f.label)}.</b> Rate yourself against the same performance goals your evaluator will use. Your evaluator completes a separate assessment before your short formal review.</div><div class="section-title">Your Self-Ratings</div><div class="table-scroll"><table class="ratings"><thead><tr><th>Category</th><th>Performance Goals</th><th>Your Rating</th></tr></thead><tbody>${f.categories.map((c,i)=>`<tr><td>${i+1}. ${escapeHtml(c[0])}</td><td class="goal">${escapeHtml(c[1])}</td><td><div class="rating-options">${f.ratings.map((r,j)=>`<span class="rating-chip"><input id="public_self_${i}_${j}" type="radio" name="self_rating_${i}" value="${escapeHtml(r)}" ${j===0?'required':''}><label for="public_self_${i}_${j}">${escapeHtml(r)}</label></span>`).join('')}</div></td></tr>`).join('')}</tbody></table></div><div class="section-title">Cadet's Perspective</div><div class="grid grid-2"><div class="field"><label>What successes in the Cadet Program are you proud of?</label><textarea name="cadetSuccess" maxlength="8000" required placeholder="Describe the successes you are proud of and why they matter."></textarea></div><div class="field"><label>What leadership skills do you plan to improve?</label><textarea name="cadetImprove" maxlength="8000" required placeholder="Describe the skills you want to improve and what you want to work on."></textarea></div></div><div class="form-actions"><div class="public-submit-note">Submitting sends this self-evaluation privately to the unit you selected. This public page cannot retrieve it afterward.</div><button type="submit" class="btn btn-primary">Submit Self-Evaluation</button></div>`;
+}
+
 async function changeDefaultLocation(key){window.__defaultLocationKey=key;window.__entryLocationKey=key;window.__reportLocation=key;window.__trendLocation=key;window.__myLocation=key;window.__reportMember='';localStorage.setItem(DEFAULT_KEY_PREFIX+currentUser.id,key);if(key.startsWith('unit:')){currentUnitId=key.slice(5);currentUser.unitId=currentUnitId;try{await sb.from('profiles').update({default_unit_id:currentUnitId}).eq('id',currentUser.id)}catch{}window.__adminUnitId=currentUnitId;window.__memberListUnitId=currentUnitId;adminUsersUnitId=null}navigate(activeView)}
 
 function setupPWA(){if('serviceWorker'in navigator)navigator.serviceWorker.register('./service-worker.js').catch(console.warn);let deferred=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;$('#installBtn')?.classList.remove('install-hidden')});$('#installBtn').onclick=async()=>{if(!deferred)return;deferred.prompt();await deferred.userChoice;deferred=null;$('#installBtn').classList.add('install-hidden')}}
