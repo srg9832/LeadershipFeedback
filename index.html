@@ -19,7 +19,21 @@
     <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="username"></div>
     <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
     <div class="login-actions"><button id="loginBtn" class="btn btn-primary">Log In</button></div>
-    <div class="config-note">Uses the same Supabase login accounts and shared CAP unit/member database as your CAP applications. Feedback records are not cached for offline use.</div>
+    <div class="public-divider"><span>Cadet?</span></div>
+    <button id="selfEvalStartBtn" class="btn btn-secondary public-start-btn" type="button">Start a Self-Evaluation</button>
+    <div class="config-note">Self-evaluations may be submitted without a login. Submitted responses are never publicly searchable or viewable. Staff logins use the same Supabase accounts and shared CAP unit/member database as your CAP applications.</div>
+  </div>
+</div>
+
+<div id="publicSelfEvalScreen" class="public-wrap hidden">
+  <div class="public-card">
+    <div class="public-head">
+      <div class="brand"><div class="brand-mark">LF</div><div><h1>Cadet Self-Evaluation</h1><p>CAP Leadership Feedback</p></div></div>
+      <button id="publicBackBtn" type="button" class="btn btn-sm btn-secondary">Back to Staff Login</button>
+    </div>
+    <div class="privacy-banner"><b>Private submission:</b> After you submit, this public page cannot retrieve, search, or display your response. Only authorized Leadership Feedback staff for the selected unit can access it.</div>
+    <div id="publicSelfEvalError" class="alert alert-danger hidden"></div>
+    <div id="publicSelfEvalContent"><div class="empty">Loading active units...</div></div>
   </div>
 </div>
 
@@ -41,6 +55,7 @@
   <nav id="mainnav" class="mainnav"></nav>
   <main>
     <section id="view-entry" class="view hidden"></section>
+    <section id="view-self" class="view hidden"></section>
     <section id="view-my" class="view hidden"></section>
     <section id="view-reports" class="view hidden"></section>
     <section id="view-trends" class="view hidden"></section>
