@@ -8,6 +8,12 @@ const RATINGS4=['Needs Improvement','Satisfactory','Very Good','Excellent'];
 const RATINGS5=['Does Not Meet','Needs Improvement','Meets','Exceeds','Far Exceeds'];
 const CADET_GRADES=['C/AB','C/Amn','C/A1C','C/SrA','C/SSgt','C/TSgt','C/MSgt','C/SMSgt','C/CMSgt','C/2d Lt','C/1st Lt','C/Capt','C/Maj','C/Lt Col','C/Col'];
 const SENIOR_GRADES=['SM','SSgt','TSgt','MSgt','SMSgt','CMSgt','FO','TFO','SFO','2d Lt','1st Lt','Capt','Maj','Lt Col','Col','Brig Gen','Maj Gen'];
+const SELF_EVAL_GRADE_TO_FORM={
+  'C/AB':'phase1','C/Amn':'phase1','C/A1C':'phase1','C/SrA':'phase1',
+  'C/SSgt':'phase2','C/TSgt':'phase2','C/MSgt':'phase2','C/SMSgt':'phase2','C/CMSgt':'phase2',
+  'C/2d Lt':'phase3','C/1st Lt':'phase3',
+  'C/Capt':'phase4','C/Maj':'phase4','C/Lt Col':'phase4','C/Col':'phase4'
+};
 const ROLES={
   cadetEvaluator:{label:'Cadet Evaluator',desc:'Enter Phase I–IV cadet feedback for authorized units; view only records they personally entered.'},
   cadetReviewer:{label:'Cadet Reviewer',desc:'View all Phase I–IV cadet feedback, member reports, and unit trends for authorized units.'},
@@ -79,7 +85,7 @@ const FORMS={
 
 
 
-let DB={units:[],users:[],members:[],encampments:[],records:[]};
+let DB={units:[],users:[],members:[],encampments:[],records:[],selfEvaluations:[]};
 let currentUser=null;
 let currentProfile=null;
 let currentUnitId=null;
@@ -101,6 +107,7 @@ function friendlyError(err){return err?.message||err?.error_description||String(
 function camelUnit(u){return{id:u.id,charterNumber:u.charter_number||'',name:u.name||'',active:u.active!==false,city:u.city||'',state:u.state||''}}
 function camelEnc(e){return{id:e.id,name:e.name,location:e.location,startDate:e.start_date,endDate:e.end_date,active:e.active!==false,createdAt:e.created_at}}
 function camelRecord(r){return{id:r.id,unitId:r.unit_id_at_evaluation||'',type:r.form_type,firstName:r.first_name_snapshot,lastName:r.last_name_snapshot,subjectName:[r.first_name_snapshot,r.last_name_snapshot].filter(Boolean).join(' '),capid:r.capid_snapshot,grade:r.grade_at_evaluation||'',reviewStart:r.review_start||'',reviewEnd:r.review_end||'',encampmentId:r.encampment_id||'',location:'',feedbackType:r.feedback_type||'',feedbackMode:r.feedback_mode||'',dutyTitle:r.duty_title||'',discussionDate:r.discussion_date||'',ratings:r.ratings||{},comments:r.comments||{},narratives:r.narratives||{},decision:r.decision||{},evaluatorTitle:r.evaluator_title||'',createdBy:r.evaluator_user_id,createdAt:r.created_at||'',evaluatorNameSnapshot:r.evaluator_name_snapshot||''}}
+function camelSelfEvaluation(r){return{id:r.id,unitId:r.unit_id,type:r.form_type,capid:r.capid_snapshot,firstName:r.first_name_snapshot,lastName:r.last_name_snapshot,currentGrade:r.current_grade,selfRatings:r.self_ratings||{},selfNarratives:r.self_narratives||{},status:r.status||'awaiting_evaluator',assignedEvaluatorId:r.assigned_evaluator_user_id||'',assignedEvaluatorName:r.assigned_evaluator_name_snapshot||'',evaluatorRatings:r.evaluator_ratings||{},evaluatorNarratives:r.evaluator_narratives||{},evaluatorTitle:r.evaluator_title||'',evaluatorStartedAt:r.evaluator_started_at||'',evaluatorCompletedAt:r.evaluator_completed_at||'',finalReviewDate:r.final_review_date||'',decision:r.decision||{},completedFeedbackId:r.completed_feedback_id||'',submittedAt:r.submitted_at||r.created_at||'',createdAt:r.created_at||'',updatedAt:r.updated_at||''}}
 function memberName(obj){return [obj?.firstName,obj?.lastName].filter(Boolean).join(' ').trim()||obj?.subjectName||obj?.displayName||''}
 function userName(id){const u=DB.users.find(x=>x.id===id);if(u)return u.displayName||memberName(u)||'CAP User';const r=DB.records.find(x=>x.createdBy===id&&x.evaluatorNameSnapshot);return r?.evaluatorNameSnapshot||'CAP User'}
 function unitDisplay(u){if(!u)return'';return [u.charterNumber,u.name].filter(Boolean).join(' — ')}
@@ -121,6 +128,10 @@ function canEncampmentAdmin(){return hasGlobal('encampmentAdmin')}
 function canUserAdmin(unitId){return isAppAdmin()||(unitId?unitRole(unitId,'unitAdmin'):hasAnyUnitRole('unitAdmin'))}
 function canAdminPage(){return canUserAdmin()||canEncampmentAdmin()}
 function hasAnyReview(){return canReviewCadet()||canReviewSenior()||canReviewEncampment()}
+function canAccessSelfEvaluation(unitId){return isAppAdmin()||unitRole(unitId,'cadetEvaluator')||unitRole(unitId,'cadetReviewer')||unitRole(unitId,'unitAdmin')}
+function hasSelfEvaluationAccess(){return isAppAdmin()||Object.keys(currentUser?.unitRoles||{}).some(id=>canAccessSelfEvaluation(id))}
+function canWorkSelfEvaluation(unitId){return isAppAdmin()||unitRole(unitId,'cadetEvaluator')}
+function selfEvaluationAccessibleUnits(){return DB.units.filter(u=>canAccessSelfEvaluation(u.id)).slice().sort((a,b)=>unitDisplay(a).localeCompare(unitDisplay(b)))}
 function adminAccessibleUnits(){return (isAppAdmin()?DB.units:DB.units.filter(u=>unitRole(u.id,'unitAdmin'))).slice().sort((a,b)=>unitDisplay(a).localeCompare(unitDisplay(b)))}
 function operationalAccessibleUnits(){return activeUnits().filter(u=>isAppAdmin()||currentUser?.unitRoles?.[u.id])}
 function entryAccessibleLocations(){
@@ -194,22 +205,24 @@ async function invokeAdminFunction(payload){
 async function loadAppData(){
   if(!sb)throw new Error('Supabase is not configured.');
   const {data:{user},error:userErr}=await sb.auth.getUser();if(userErr||!user)throw userErr||new Error('Not signed in');
-  const [profileR,unitsR,globalR,unitPermR,encR,feedbackR,membersR,assignR,namesR]=await Promise.all([
+  const [profileR,unitsR,globalR,unitPermR,encR,feedbackR,selfEvalR,membersR,assignR,namesR]=await Promise.all([
     sb.from('profiles').select('id,display_name,member_id,default_unit_id,must_change_password').eq('id',user.id).single(),
     sb.from('units').select('id,charter_number,name,city,state,active').order('charter_number'),
     sb.from('leadership_global_permissions').select('*').eq('user_id',user.id).maybeSingle(),
     sb.from('leadership_unit_permissions').select('*').eq('user_id',user.id),
     sb.from('leadership_encampments').select('*').order('start_date',{ascending:false}),
     sb.from('leadership_feedback').select('*').order('created_at',{ascending:false}),
+    sb.from('leadership_self_evaluations').select('*').order('submitted_at',{ascending:false}),
     sb.from('members').select('id,capid,first_name,last_name,member_type,active'),
     sb.from('member_unit_assignments').select('id,member_id,unit_id,is_primary,active,start_date,end_date').eq('active',true),
     sb.rpc('leadership_user_names')
   ]);
-  for(const r of [profileR,unitsR,globalR,unitPermR,encR,feedbackR,membersR,assignR,namesR])if(r.error)throw r.error;
+  for(const r of [profileR,unitsR,globalR,unitPermR,encR,feedbackR,selfEvalR,membersR,assignR,namesR])if(r.error)throw r.error;
   currentProfile=profileR.data;
   DB.units=(unitsR.data||[]).map(camelUnit);
   DB.encampments=(encR.data||[]).map(camelEnc);
   DB.records=(feedbackR.data||[]).map(camelRecord);
+  DB.selfEvaluations=(selfEvalR.data||[]).map(camelSelfEvaluation);
   const primary=new Map();for(const a of assignR.data||[]){if(a.is_primary&&!primary.has(a.member_id))primary.set(a.member_id,a.unit_id)}
   DB.members=(membersR.data||[]).map(m=>({id:m.id,capid:m.capid,firstName:m.first_name,lastName:m.last_name,memberType:m.member_type,active:m.active!==false,unitId:primary.get(m.id)||''}));
   DB.users=(namesR.data||[]).map(u=>({id:u.user_id,displayName:u.display_name,firstName:u.first_name||'',lastName:u.last_name||'',memberType:u.member_type||'',email:'',roles:[],unitId:''}));
@@ -231,7 +244,7 @@ async function login(){
   $('#loginError').classList.add('hidden');if(!SUPABASE_READY){$('#configError').textContent='Edit config.js and paste the existing CAP Schedule Supabase anon/publishable key before using the app.';$('#configError').classList.remove('hidden');return}
   setBusy(true);try{const email=$('#loginEmail').value.trim(),password=$('#loginPassword').value;const {error}=await sb.auth.signInWithPassword({email,password});if(error)throw error;await loadAppData();showApp()}catch(e){$('#loginError').textContent=friendlyError(e);$('#loginError').classList.remove('hidden')}finally{setBusy(false)}
 }
-async function logout(){if(sb)await sb.auth.signOut();currentUser=null;DB={units:[],users:[],members:[],encampments:[],records:[]};$('#app').classList.add('hidden');$('#loginScreen').classList.remove('hidden')}
+async function logout(){if(sb)await sb.auth.signOut();currentUser=null;DB={units:[],users:[],members:[],encampments:[],records:[],selfEvaluations:[]};$('#app').classList.add('hidden');$('#publicSelfEvalScreen')?.classList.add('hidden');$('#loginScreen').classList.remove('hidden')}
 function showApp(){
   $('#loginScreen').classList.add('hidden');$('#app').classList.remove('hidden');
   $('#userName').textContent=memberName(currentUser)||currentUser.displayName;$('#memberTypePill').textContent=currentUser.memberType||'CAP User';
@@ -275,8 +288,8 @@ async function savePassword(e){
   }
 }
 
-function buildNav(){const nav=[];if(entryAccessibleLocations().length)nav.push(['entry','Feedback Entry']);if(entryAccessibleLocations().length)nav.push(['my','Feedback Records You Have Given']);if(hasAnyReview())nav.push(['reports','Reports']);if(hasAnyReview())nav.push(['trends','Unit Trends']);if(canAdminPage())nav.push(['admin','Administration']);$('#mainnav').innerHTML=nav.map(([id,label])=>`<button class="navbtn ${activeView===id?'active':''}" data-view="${id}">${label}</button>`).join('');$$('#mainnav .navbtn').forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
-function navigate(view){activeView=view;$$('.view').forEach(v=>v.classList.add('hidden'));const el=$('#view-'+view);if(!el)return;el.classList.remove('hidden');buildNav();const fn={entry:renderEntry,my:renderMy,reports:renderReports,trends:renderTrends,admin:renderAdmin}[view];if(fn)fn()}
+function buildNav(){const nav=[];if(entryAccessibleLocations().length)nav.push(['entry','Feedback Entry']);if(hasSelfEvaluationAccess())nav.push(['self','Self-Evaluation Requests']);if(entryAccessibleLocations().length)nav.push(['my','Feedback Records You Have Given']);if(hasAnyReview())nav.push(['reports','Reports']);if(hasAnyReview())nav.push(['trends','Unit Trends']);if(canAdminPage())nav.push(['admin','Administration']);$('#mainnav').innerHTML=nav.map(([id,label])=>`<button class="navbtn ${activeView===id?'active':''}" data-view="${id}">${label}</button>`).join('');$$('#mainnav .navbtn').forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
+function navigate(view){activeView=view;$$('.view').forEach(v=>v.classList.add('hidden'));const el=$('#view-'+view);if(!el)return;el.classList.remove('hidden');buildNav();const fn={entry:renderEntry,self:renderSelfEvaluations,my:renderMy,reports:renderReports,trends:renderTrends,admin:renderAdmin}[view];if(fn)fn()}
 
 function renderEntry(){
   const locations=entryAccessibleLocations();if(!locations.length){$('#view-entry').innerHTML='<div class="panel"><div class="empty">You do not have evaluator permissions for an active unit or encampment.</div></div>';return}
