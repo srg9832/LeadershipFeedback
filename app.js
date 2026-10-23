@@ -649,6 +649,8 @@ async function changeDefaultLocation(key){window.__defaultLocationKey=key;window
 function setupPWA(){if('serviceWorker'in navigator)navigator.serviceWorker.register('./service-worker.js').catch(console.warn);let deferred=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;$('#installBtn')?.classList.remove('install-hidden')});$('#installBtn').onclick=async()=>{if(!deferred)return;deferred.prompt();await deferred.userChoice;deferred=null;$('#installBtn').classList.add('install-hidden')}}
 async function boot(){setupPWA();if(!SUPABASE_READY){$('#configError').textContent='Setup required: edit config.js and paste the existing CAP Schedule Supabase anon/publishable key.';$('#configError').classList.remove('hidden');return}const {data}=await sb.auth.getSession();if(data.session){try{setBusy(true);await loadAppData();showApp()}catch(e){console.error(e);$('#loginError').textContent=friendlyError(e);$('#loginError').classList.remove('hidden')}finally{setBusy(false)}}}
 $('#loginBtn').onclick=login;
+$('#selfEvalStartBtn').onclick=showPublicSelfEvaluation;
+$('#publicBackBtn').onclick=hidePublicSelfEvaluation;
 $('#loginPassword').onkeydown=e=>{if(e.key==='Enter')login()};
 $('#logoutBtn').onclick=logout;
 $('#changePasswordBtn').onclick=()=>openPasswordDialog(false);
