@@ -75,3 +75,11 @@ CAP-Leadership-Feedback/
 ```
 
 Start with **DEPLOYMENT_INSTRUCTIONS.md**. Run the migration and deploy the Edge Function **before** putting the website live.
+
+## Uniform inspection review in cadet feedback
+
+During Phase I–IV feedback entry, entering the CAPID retrieves that cadet's existing unit inspection history (date, score out of 10, and inspector rating). The evaluator may select one inspection and explicitly choose **Approve selected inspection** or **Do not approve selected inspection**; leaving both fields blank records no determination. This is also available at the final formal review stage of the public self-evaluation workflow.
+
+Approval is **not** inferred from the uniform app's pass flag or the cadet's promotion recommendation. Decisions are stored in an additive leadership_uniform_reviews table linked to the saved feedback and source inspection; the existing feedback-save procedures remain available and unchanged. The new save wrappers make the two records commit or roll back together. Duplicate approval of the same inspection is blocked. Opening a completed feedback record displays its linked uniform decision if present.
+
+Previously completed feedback does not retroactively approve historical inspections; a reviewer must explicitly make a determination in a new review. See Data Entry Reports for the one-column historical summary and separate approved result for eServices.
