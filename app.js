@@ -310,6 +310,51 @@ function ratingName(i){return'rating_'+i}
 
 function gradeOptions(group){const grades=group==='senior'?SENIOR_GRADES:CADET_GRADES;return '<option value="">Select grade...</option>'+grades.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('')}
 
+
+function uniformReviewFieldsHtml(){
+  return '<div class="section-title">Uniform Inspection Review</div>'+
+    '<p class="sub">Review the member’s inspection history. An inspection score is not itself approval for eServices. Choose an inspection and explicitly approve or do not approve it.</p>'+
+    '<div class="table-wrap" id="uniformReviewHistory"><div class="sub">Enter a CAPID to load inspections.</div></div>'+
+    '<div class="grid grid-2" style="margin-top:10px">'+
+    '<div class="field"><label>Inspection Being Reviewed</label><select name="uniformInspectionId" id="uniformReviewInspection"><option value="">No inspection selected</option></select></div>'+
+    '<div class="field"><label>Uniform Requirement Decision</label><select name="uniformDecision"><option value="">No uniform determination</option><option value="approved">Approve selected inspection</option><option value="not_approved">Do not approve selected inspection</option></select></div></div>';
+}
+async function loadUniformReviewHistory(capid,unitId,historyId='uniformReviewHistory',selectId='uniformReviewInspection'){
+  const panel=document.getElementById(historyId),select=document.getElementById(selectId);
+  if(!panel||!select)return;
+  const key=String(capid||'').trim()+'|'+String(unitId||'');
+  panel.dataset.requestKey=key;
+  select.innerHTML='<option value="">No inspection selected</option>';
+  if(!capid||!unitId){panel.innerHTML='<div class="sub">Enter a CAPID to load inspections.</div>';return}
+  panel.innerHTML='<div class="sub">Loading uniform inspection history...</div>';
+  try{
+    const {data,error}=await sb.rpc('leadership_uniform_history',{p_capid:String(capid).trim(),p_unit_id:unitId});
+    if(error)throw error;
+    if(!document.getElementById(historyId)||panel.dataset.requestKey!==key)return;
+    const rows=Array.isArray(data)?data:[];
+    if(!rows.length){panel.innerHTML='<div class="sub">No uniform inspections recorded for this CAPID at this unit.</div>';return}
+    panel.innerHTML='<table class="data-table" style="min-width:570px"><thead><tr><th>Inspection Date</th><th>Score</th><th>Inspector Rating</th><th>Leadership Review</th></tr></thead><tbody>'+
+      rows.map(x=>'<tr><td>'+escapeHtml(formatDatePretty(x.inspection_date))+'</td><td>'+escapeHtml(x.total_score===null?'—':x.total_score+'/10')+
+      '</td><td>'+escapeHtml(x.overall_rating||'—')+'</td><td>'+
+      (x.review_decision==='approved'?'Approved '+escapeHtml(formatDatePretty(x.approval_date)):x.review_decision==='not_approved'?'Not approved':'Not reviewed')+
+      '</td></tr>').join('')+'</tbody></table>';
+    select.innerHTML='<option value="">No inspection selected</option>'+
+      rows.map(x=>'<option value="'+escapeHtml(x.id)+'" '+(x.review_decision==='approved'?'disabled':'')+'>'+
+        escapeHtml(formatDatePretty(x.inspection_date))+' · '+escapeHtml(x.total_score===null?'—':x.total_score+'/10')+
+        ' · '+escapeHtml(x.overall_rating||'')+(x.review_decision==='approved'?' (already approved)':'')+'</option>').join('');
+  }catch(err){
+    if(panel.dataset.requestKey===key)panel.innerHTML='<div class="alert alert-warn">Unable to load uniform history: '+escapeHtml(friendlyError(err))+'</div>';
+  }
+}
+function uniformDecisionFromForm(form){
+  const raw=String(form.get('uniformInspectionId')||'').trim();
+  const decision=String(form.get('uniformDecision')||'').trim();
+  if((raw&&!decision)||(!raw&&decision))throw new Error('Select both an inspection and a uniform decision, or leave both blank.');
+  if(decision&&!['approved','not_approved'].includes(decision))throw new Error('Invalid uniform decision.');
+  if(raw&&!/^\d+$/.test(raw))throw new Error('Invalid inspection ID.');
+  return {inspectionId:raw?Number(raw):null,approved:decision?decision==='approved':null};
+}
+
 function renderFeedbackForm(type){
   const f=FORMS[type],locKey=selectedEntryLocationKey(),enc=entryLocationEncampment(locKey),unitId=entryLocationUnitId(locKey),isSenior=f.group==='senior',today=localTodayISO(),encStatus=enc?encampmentEntryStatus(enc):null,hasLocation=!!locKey;
   if(!permittedFormsForLocation(locKey).some(([k])=>k===type)){ $('#feedbackForm').innerHTML='<div class="empty">That worksheet is not available for the selected Evaluation Unit.</div>';return }
@@ -329,6 +374,7 @@ function renderFeedbackForm(type){
   if(f.decision==='promotion')html+=`<div class="section-title">Promotion Recommendation</div><div class="grid grid-3"><div class="field"><label>Recommendation</label><select name="promotion"><option value="">Select...</option><option value="approved">Promotion Approved</option><option value="sustained">Sustained in Grade</option></select></div><div class="field"><label>Date of Next Review (if sustained)</label><input type="date" name="nextReview"></div><div class="field"><label>Evaluator Title</label><input name="evaluatorTitle" placeholder="Cadet Programs Officer"></div></div>`;
   else if(f.decision==='graduate')html+=`<div class="section-title">Graduation Recommendation</div><div class="grid grid-2"><div class="field"><label>Recommend Graduate?</label><select name="graduate"><option value="">Select...</option><option value="yes">Yes</option><option value="no">No</option></select></div><div class="field"><label>Evaluator Title</label><input name="evaluatorTitle"></div></div>`;
   else html+=`<div class="section-title">Evaluator</div><div class="grid grid-2"><div class="field"><label>Evaluator</label><input value="${escapeHtml(userName(currentUser.id))}" disabled></div><div class="field"><label>Evaluator Title</label><input name="evaluatorTitle"></div></div>`;
+  if(f.decision==='promotion')html+=uniformReviewFieldsHtml();
   html+=`<div class="form-actions"><button type="button" id="clearForm" class="btn btn-secondary">Clear</button><button type="submit" class="btn btn-primary" ${(!hasLocation||encStatus?.locked)?'disabled':''}>Save Feedback</button></div></form>`;
   $('#feedbackForm').innerHTML=html;$('#entryForm').onsubmit=saveFeedback;$('#clearForm').onclick=()=>renderFeedbackForm(activeForm);bindCapidLookup(f.group,locKey);
   if(encStatus?.locked)$('#entryForm').querySelectorAll('input,select,textarea,button[type="submit"]').forEach(el=>el.disabled=true);
@@ -355,6 +401,19 @@ function bindCapidLookup(group,locKey=selectedEntryLocationKey()){
     }
   };
   cap.addEventListener('input',run);cap.addEventListener('blur',run);
+  if(group==='cadet'&&!locKey?.startsWith('enc:')){
+    let timer=null;
+    const queue=()=>{
+      clearTimeout(timer);
+      const capid=cap.value.trim();
+      const panel=document.getElementById('uniformReviewHistory');
+      if(panel)panel.dataset.requestKey='';
+      if(!capid){loadUniformReviewHistory('',unitId);return}
+      timer=setTimeout(()=>loadUniformReviewHistory(capid,unitId),350);
+    };
+    cap.addEventListener('input',queue);
+    cap.addEventListener('blur',()=>{clearTimeout(timer);loadUniformReviewHistory(cap.value.trim(),unitId)});
+  }
 }
 
 function effectiveRecordDate(r){return r.reviewEnd||r.discussionDate||(r.createdAt||'').slice(0,10)}
@@ -441,7 +500,11 @@ async function saveFeedback(e){
   const narratives={};f.narratives.forEach(([k])=>narratives[k]=form.get('n_'+k)||'');const firstName=String(form.get('firstName')||'').trim(),lastName=String(form.get('lastName')||'').trim();
   const payload={type:activeForm,unitId:isEnc?'':unitId,encampmentId:enc?.id||'',capid,firstName,lastName,grade:form.get('grade')||'',reviewStart:form.get('reviewStart')||'',reviewEnd:form.get('reviewEnd')||'',feedbackType:form.get('feedbackType')||'',feedbackMode:form.get('feedbackMode')||'',dutyTitle:form.get('dutyTitle')||'',discussionDate:form.get('discussionDate')||'',ratings,comments,narratives,decision:{promotion:form.get('promotion')||'',nextReview:form.get('nextReview')||'',graduate:form.get('graduate')||''},evaluatorTitle:form.get('evaluatorTitle')||''};
   if(!capid||!firstName||!lastName){toast('CAPID, Last Name, and First Name are required.');return}if(!f.senior&&!payload.reviewEnd){toast('The evaluation end / feedback date is required.');return}if(f.senior&&!payload.discussionDate){toast('The date of discussion is required.');return}
-  setBusy(true);try{const {error}=await sb.rpc('leadership_save_feedback',{p_payload:payload});if(error)throw error;toast(known?.active===false?'Feedback saved and member reactivated.':'Feedback saved.');await refreshData(false);renderFeedbackForm(activeForm)}catch(err){toast(friendlyError(err))}finally{setBusy(false)}
+  let uniform={inspectionId:null,approved:null};
+  if(f.decision==='promotion'){try{uniform=uniformDecisionFromForm(form)}catch(err){toast(friendlyError(err));return}}
+  setBusy(true);try{const {error}=await sb.rpc('leadership_save_feedback_reviewed',{
+    p_payload:payload,p_uniform_inspection_id:uniform.inspectionId,p_uniform_approved:uniform.approved
+  });if(error)throw error;toast(known?.active===false?'Feedback saved and member reactivated.':'Feedback saved.');await refreshData(false);renderFeedbackForm(activeForm)}catch(err){toast(friendlyError(err))}finally{setBusy(false)}
 }
 
 function renderMy(){const opts=[{key:'all',label:'All Locations'},...myLocationOptions()];let loc=window.__myLocation||'all';if(!opts.some(o=>o.key===loc))loc='all';window.__myLocation=loc;const recs=DB.records.filter(r=>r.createdBy===currentUser.id&&visibleToCurrentUser(r)&&recordMatchesLocation(r,loc)).sort(compareRecordDates);$('#view-my').innerHTML=`<div class="panel"><h2>Feedback Records You Have Given</h2><p class="sub">Records you personally entered. Use the location selector here instead of relying on the header default.</p><div class="field" style="max-width:520px"><label>Unit / Encampment</label><select id="myLocation">${locationOptionsHtml(opts,loc)}</select></div>${recordTable(recs)}</div>`;$('#myLocation').onchange=e=>{window.__myLocation=e.target.value;renderMy()};bindRecordButtons()}
@@ -615,7 +678,7 @@ function selfEvalDetailHtml(r){
   if(r.status==='awaiting_evaluator'){
     h+=canWork?`<div class="self-actions"><button class="btn btn-primary claim-self-eval" data-id="${r.id}">Assign to Me & Start Evaluator Review</button><button class="btn btn-danger cancel-self-eval" data-id="${r.id}">Cancel Request</button></div>`:`<div class="alert alert-info" style="margin-top:14px">Assign an eligible evaluator before completing the evaluator assessment.</div><div class="self-actions"><button class="btn btn-danger cancel-self-eval" data-id="${r.id}">Cancel Request</button></div>`;
   }else if(r.status==='evaluator_in_progress'){
-    if(canEdit)h+=`<form id="selfEvaluatorForm"><div class="section-title">Evaluator Assessment</div><p class="sub">Complete your assessment independently. The highlighted rows show where your saved rating differs from the cadet's self-rating.</p><div class="table-wrap"><table class="compare-table"><thead><tr><th>Category</th><th>Performance Goals</th><th>Cadet Self-Rating</th><th>Your Rating</th></tr></thead><tbody>${selfEvalComparisonRows(r,true)}</tbody></table></div><div class="grid grid-2"><div class="field"><label>Leader's Perspective — observed successes</label><textarea name="leaderSuccess" maxlength="8000">${escapeHtml(r.evaluatorNarratives?.leaderSuccess||'')}</textarea></div><div class="field"><label>Leader's Perspective — how the cadet can improve leadership skills</label><textarea name="leaderImprove" maxlength="8000">${escapeHtml(r.evaluatorNarratives?.leaderImprove||'')}</textarea></div></div><div class="field" style="max-width:520px"><label>Evaluator Title</label><input name="evaluatorTitle" value="${escapeHtml(r.evaluatorTitle||'')}" placeholder="Cadet Programs Officer"></div><div class="form-actions"><button type="button" class="btn btn-danger cancel-self-eval" data-id="${r.id}">Cancel Request</button><button type="submit" class="btn btn-primary">Save Evaluator Review</button></div></form>`;
+    if(canEdit)h+=`<form id="selfEvaluatorForm"><div class="section-title">Evaluator Assessment</div><p class="sub">Complete your assessment independently. The highlighted rows show where your saved rating differs from the cadet's self-rating.</p><div class="table-wrap"><table class="compare-table"><thead><tr><th>Category</th><th>Performance Goals</th><th>Cadet Self-Rating</th><th>Your Rating</th></tr></thead><tbody>${selfEvalComparisonRows(r,true)}</tbody></table></div><div class="grid grid-2"><div class="field"><label>Leader's Perspective — observed successes</label><textarea name="leaderSuccess" maxlength="8000">${escapeHtml(r.evaluatorNarratives?.leaderSuccess||'')}</textarea></div><div class="field"><label>Leader's Perspective — how the cadet can improve leadership skills</label><textarea name="leaderImprove" maxlength="8000">${escapeHtml(r.evaluatorNarratives?.leaderImprove||'')}</textarea></div></div><div class="field" style="max-width:520px"><label>Evaluator Title</label><input name="evaluatorTitle" value="${escapeHtml(r.evaluatorTitle||'')}" placeholder="Cadet Programs Officer"></div>${uniformReviewFieldsHtml().replaceAll("uniformReviewHistory","selfUniformReviewHistory").replaceAll("uniformReviewInspection","selfUniformReviewInspection")}<div class="form-actions"><button type="button" class="btn btn-danger cancel-self-eval" data-id="${r.id}">Cancel Request</button><button type="submit" class="btn btn-primary">Save Evaluator Review</button></div></form>`;
     else h+=`<div class="alert alert-info" style="margin-top:14px">This request is currently assigned to ${escapeHtml(r.assignedEvaluatorName||'another evaluator')}.</div>${isAppAdmin()?`<div class="self-actions"><button class="btn btn-primary claim-self-eval" data-id="${r.id}">Take Over Request</button><button class="btn btn-danger cancel-self-eval" data-id="${r.id}">Cancel Request</button></div>`:''}`;
   }else if(r.status==='ready_for_review'){
     h+=`<div class="section-title">Evaluator Perspective</div>${selfEvalLeaderNarratives(r)}<div class="alert alert-info"><b>Ready for the short formal review.</b> Focus the discussion on the highlighted rating differences, the cadet's goals, and the evaluator's observations.</div>`;
@@ -636,7 +699,11 @@ function renderSelfEvaluations(){
   $('#selfEvalUnitSelect').onchange=e=>{window.__selfEvalUnitId=e.target.value;window.__selfEvalRequestId='';renderSelfEvaluations()};$('#selfEvalStatusSelect').onchange=e=>{window.__selfEvalStatus=e.target.value;renderSelfEvaluations()};document.querySelectorAll('.open-self-eval').forEach(b=>b.onclick=()=>{window.__selfEvalRequestId=b.dataset.id;renderSelfEvaluations();setTimeout(()=>$('#selfEvalDetail')?.scrollIntoView({behavior:'smooth',block:'start'}),20)});document.querySelectorAll('.assign-self-eval').forEach(b=>b.onclick=()=>openAssignEvaluator(b.dataset.id));bindSelfEvaluationDetail();
 }
 function bindSelfEvaluationDetail(){
-  document.querySelectorAll('.claim-self-eval').forEach(b=>b.onclick=()=>claimSelfEvaluation(b.dataset.id));document.querySelectorAll('.cancel-self-eval').forEach(b=>b.onclick=()=>cancelSelfEvaluation(b.dataset.id));if($('#selfEvaluatorForm'))$('#selfEvaluatorForm').onsubmit=saveSelfEvaluationEvaluator;if($('#selfFinalizeForm'))$('#selfFinalizeForm').onsubmit=finalizeSelfEvaluation;document.querySelectorAll('.view-completed-self').forEach(b=>b.onclick=()=>openRecord(b.dataset.feedbackId));
+  document.querySelectorAll('.claim-self-eval').forEach(b=>b.onclick=()=>claimSelfEvaluation(b.dataset.id));document.querySelectorAll('.cancel-self-eval').forEach(b=>b.onclick=()=>cancelSelfEvaluation(b.dataset.id));if($('#selfEvaluatorForm'))$('#selfEvaluatorForm').onsubmit=saveSelfEvaluationEvaluator;if($('#selfFinalizeForm')){
+     $('#selfFinalizeForm').onsubmit=finalizeSelfEvaluation;
+     const r=DB.selfEvaluations.find(x=>x.id===window.__selfEvalRequestId);
+     if(r)loadUniformReviewHistory(r.capid,r.unitId,'selfUniformReviewHistory','selfUniformReviewInspection');
+   }document.querySelectorAll('.view-completed-self').forEach(b=>b.onclick=()=>openRecord(b.dataset.feedbackId));
 }
 async function openAssignEvaluator(id){
   const r=DB.selfEvaluations.find(x=>x.id===id);if(!r)return;
@@ -671,7 +738,10 @@ async function saveSelfEvaluationEvaluator(e){
   e.preventDefault();const id=window.__selfEvalRequestId,r=DB.selfEvaluations.find(x=>x.id===id);if(!r)return;const fd=new FormData(e.target),f=FORMS[r.type],ratings={};for(let i=0;i<f.categories.length;i++)ratings[i]=fd.get(`eval_rating_${i}`)||'';const payload={ratings,narratives:{leaderSuccess:String(fd.get('leaderSuccess')||'').trim(),leaderImprove:String(fd.get('leaderImprove')||'').trim()},evaluatorTitle:String(fd.get('evaluatorTitle')||'').trim()};setBusy(true);try{const {error}=await sb.rpc('leadership_save_self_evaluation_evaluator',{p_request_id:id,p_payload:payload});if(error)throw error;toast('Evaluator review saved. Request is ready for the formal review.');await refreshData(false);renderSelfEvaluations()}catch(err){toast(friendlyError(err))}finally{setBusy(false)}
 }
 async function finalizeSelfEvaluation(e){
-  e.preventDefault();const id=window.__selfEvalRequestId,fd=new FormData(e.target),payload={reviewDate:fd.get('reviewDate')||'',promotion:fd.get('promotion')||'',nextReview:fd.get('nextReview')||'',evaluatorTitle:String(fd.get('evaluatorTitle')||'').trim()};if(payload.promotion==='sustained'&&!payload.nextReview){toast('Date of Next Review is required when retaining a cadet in grade.');return}setBusy(true);try{const {data,error}=await sb.rpc('leadership_finalize_self_evaluation',{p_request_id:id,p_payload:payload});if(error)throw error;toast('Formal review completed and normal feedback record created.');await refreshData(false);renderSelfEvaluations();if(data)window.__lastCompletedFeedbackId=data}catch(err){toast(friendlyError(err))}finally{setBusy(false)}
+  e.preventDefault();const id=window.__selfEvalRequestId,fd=new FormData(e.target),payload={reviewDate:fd.get('reviewDate')||'',promotion:fd.get('promotion')||'',nextReview:fd.get('nextReview')||'',evaluatorTitle:String(fd.get('evaluatorTitle')||'').trim()};if(payload.promotion==='sustained'&&!payload.nextReview){toast('Date of Next Review is required when retaining a cadet in grade.');return}let uniform;try{uniform=uniformDecisionFromForm(fd)}catch(err){toast(friendlyError(err));return}
+  setBusy(true);try{const {data,error}=await sb.rpc('leadership_finalize_self_evaluation_reviewed',{
+    p_request_id:id,p_payload:payload,p_uniform_inspection_id:uniform.inspectionId,p_uniform_approved:uniform.approved
+  });if(error)throw error;toast('Formal review completed and normal feedback record created.');await refreshData(false);renderSelfEvaluations();if(data)window.__lastCompletedFeedbackId=data}catch(err){toast(friendlyError(err))}finally{setBusy(false)}
 }
 async function cancelSelfEvaluation(id){if(!confirm('Cancel this self-evaluation request? This cannot be used to create feedback after it is cancelled.'))return;setBusy(true);try{const {error}=await sb.rpc('leadership_cancel_self_evaluation',{p_request_id:id});if(error)throw error;toast('Self-evaluation request cancelled.');await refreshData(false);renderSelfEvaluations()}catch(err){toast(friendlyError(err))}finally{setBusy(false)}}
 
