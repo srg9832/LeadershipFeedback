@@ -430,7 +430,25 @@ function openRecord(id){
   h+='<h3>Narrative</h3>';f.narratives.forEach(([k,label])=>{if(r.narratives?.[k])h+=`<div class="narrative"><b>${escapeHtml(label)}</b>${escapeHtml(r.narratives[k])}</div>`});
   if(r.decision?.promotion)h+=`<div class="narrative"><b>Promotion Recommendation</b>${r.decision.promotion==='approved'?'Promotion Approved':'Sustained in Grade'} ${r.decision.nextReview?'— Next review '+escapeHtml(r.decision.nextReview):''}</div>`;
   if(r.decision?.graduate)h+=`<div class="narrative"><b>Graduation Recommendation</b>${r.decision.graduate.toUpperCase()}</div>`;
-  h+='</div>';$('#modalTitle').textContent=f.label+' — '+memberName(r);$('#modalBody').innerHTML=h;$('#recordModal').showModal();
+  h+='</div>';$('#modalTitle').textContent=f.label+' — '+memberName(r);
+  $('#modalBody').innerHTML=h;
+  $('#modalBody').dataset.recordId=String(r.id);
+  $('#recordModal').showModal();
+  if(f.decision==='promotion'&&r.id){
+    sb.rpc('leadership_uniform_review_for_feedback',{p_feedback_id:r.id}).then(({data,error})=>{
+      const body=$('#modalBody');
+      if(!body||body.dataset.recordId!==String(r.id))return;
+      let desc;
+      if(error)desc='Unable to load uniform decision: '+escapeHtml(friendlyError(error));
+      else if(!data)desc='No uniform inspection determination recorded with this feedback.';
+      else desc='<b>'+ (data.approved?'Approved uniform inspection':'Uniform inspection not approved')+'</b>'+
+        ' • Inspected '+escapeHtml(formatDatePretty(data.inspection_date))+
+        ' • '+escapeHtml(data.total_score===null?'—':data.total_score+'/10')+
+        ' • '+escapeHtml(data.overall_rating||'')+
+        ' • Reviewed '+escapeHtml(formatDatePretty(data.review_date));
+      body.insertAdjacentHTML('beforeend','<div class="narrative" style="margin-top:12px"><b>Uniform Review</b>'+desc+'</div>');
+    });
+  }
 }
 
 function isoToday(){return new Date().toISOString().slice(0,10)}
